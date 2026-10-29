@@ -12,6 +12,9 @@ Xbox 网页串流 - 本地服务器
   5. /api/power 通过 xccs.xboxlive.com 远程开关机
 
 协议复刻自开源项目 xal-node / xbox-xcloud-player / Geocld.XStreaming (MIT)。
+跨平台: macOS / Windows / Linux。
+  - 签名: 优先 cryptography 库 (pip install cryptography), 否则回退 openssl 命令行
+  - Windows 会自动注册 ms-xal:// 协议处理器 (登录回调), 也可 python server.py --auth-code "<url>" 手动喂码
 仅监听 127.0.0.1, 令牌保存在本目录 tokens.json (权限 600)。
 """
 
@@ -34,10 +37,24 @@ import time
 import urllib.parse
 import uuid
 
+# 签名后端: 优先 cryptography (跨平台纯 Python 进程内), 否则 openssl 命令行
+try:
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.serialization import (
+        load_pem_private_key, Encoding, PrivateFormat, NoEncryption)
+    from cryptography.exceptions import InvalidSignature  # noqa: F401
+    HAVE_CRYPTOGRAPHY = True
+except ImportError:
+    HAVE_CRYPTOGRAPHY = False
+
+IS_WINDOWS = os.name == 'nt'
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WWW_DIR = os.path.join(BASE_DIR, 'www')
 TOKEN_FILE = os.path.join(BASE_DIR, 'tokens.json')
 PORT = 8977
+TMP_DIR = os.path.join(tempfile.gettempdir(), 'xwr-hls')
+FFMPEG_LOG = os.path.join(tempfile.gettempdir(), 'xwr-ffmpeg.log')
 
 # XAL 应用标识 (xal-node 同款)
 XAL_APP = {
@@ -131,18 +148,61 @@ def _b64url(b):
     return base64.urlsafe_b64encode(b).rstrip(b'=').decode()
 
 
-def xal_ensure_keys():
-    keys = _state.get('xalkeys')
-    if keys and keys.get('pem'):
-        return keys
-    pem = subprocess.run(['openssl', 'ecparam', '-name', 'prime256v1', '-genkey', '-noout'],
-                         capture_output=True, check=True).stdout.decode()
+def _ec_generate_pem():
+    """生成 P-256 私钥, 返回 PEM 文本。"""
+    if HAVE_CRYPTOGRAPHY:
+        key = ec.generate_private_key(ec.SECP256R1())
+        return key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()).decode()
+    return subprocess.run(['openssl', 'ecparam', '-name', 'prime256v1', '-genkey', '-noout'],
+                          capture_output=True, check=True).stdout.decode()
+
+
+def _ec_pubkey_xy(pem):
+    """PEM -> 公钥 (x, y) 的 urlsafe-b64 字符串。"""
+    if HAVE_CRYPTOGRAPHY:
+        key = load_pem_private_key(pem.encode(), password=None)
+        nums = key.public_key().public_numbers()
+        return (_b64url(nums.x.to_bytes(32, 'big')),
+                _b64url(nums.y.to_bytes(32, 'big')))
     der = subprocess.run(['openssl', 'ec', '-in', '/dev/stdin', '-pubout', '-outform', 'DER'],
                          input=pem.encode(), capture_output=True, check=True).stdout
     if len(der) < 65 or der[-65] != 0x04:
         raise RuntimeError('解析 P-256 公钥失败')
     point = der[-64:]
-    keys = {'pem': pem, 'x': _b64url(point[:32]), 'y': _b64url(point[32:])}
+    return _b64url(point[:32]), _b64url(point[32:])
+
+
+def _ec_sign_p1363(pem, data):
+    """ECDSA-SHA256 签名, 返回 64 字节 r||s (IEEE-P1363)。"""
+    if HAVE_CRYPTOGRAPHY:
+        key = load_pem_private_key(pem.encode(), password=None)
+        der = key.sign(data, ec.ECDSA(hashes.SHA256()))
+        return _der_to_p1363(der)
+    fd, keyfile = tempfile.mkstemp()
+    try:
+        os.write(fd, pem.encode())
+        os.close(fd)
+        try:
+            os.chmod(keyfile, 0o600)
+        except OSError:
+            pass
+        der = subprocess.run(['openssl', 'dgst', '-sha256', '-sign', keyfile],
+                             input=data, capture_output=True, check=True).stdout
+    finally:
+        try:
+            os.unlink(keyfile)
+        except OSError:
+            pass
+    return _der_to_p1363(der)
+
+
+def xal_ensure_keys():
+    keys = _state.get('xalkeys')
+    if keys and keys.get('pem'):
+        return keys
+    pem = _ec_generate_pem()
+    x, y = _ec_pubkey_xy(pem)
+    keys = {'pem': pem, 'x': x, 'y': y}
     _state['xalkeys'] = keys
     save_tokens()
     return keys
@@ -174,19 +234,7 @@ def xal_sign(path, authorization_token, payload):
     buf = struct.pack('>I', 1) + b'\x00' + struct.pack('>Q', filetime) + b'\x00'
     for part in ('POST', path, authorization_token, payload):
         buf += part.encode() + b'\x00'
-    fd, keyfile = tempfile.mkstemp()
-    try:
-        os.write(fd, keys['pem'].encode())
-        os.close(fd)
-        os.chmod(keyfile, 0o600)
-        der = subprocess.run(['openssl', 'dgst', '-sha256', '-sign', keyfile],
-                             input=buf, capture_output=True, check=True).stdout
-    finally:
-        try:
-            os.unlink(keyfile)
-        except OSError:
-            pass
-    sig = _der_to_p1363(der)
+    sig = _ec_sign_p1363(keys['pem'], buf)
     header = struct.pack('>I', 1) + struct.pack('>Q', filetime) + sig
     return base64.b64encode(header).decode()
 
@@ -487,10 +535,44 @@ _live = {
 
 
 def _find_ffmpeg():
-    cand = os.path.join(BASE_DIR, 'bin', 'ffmpeg')
-    if os.path.isfile(cand) and os.access(cand, os.X_OK):
-        return cand
+    for name in ('ffmpeg.exe', 'ffmpeg') if IS_WINDOWS else ('ffmpeg',):
+        cand = os.path.join(BASE_DIR, 'bin', name)
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return cand
     return 'ffmpeg'
+
+
+_encoder_cache = None
+
+
+def _select_h264_encoder(ff):
+    """按硬件能力选择 8Mbps H.264 编码器 (VideoToolbox/NVENC/QSV/AMF/libx264)。
+    返回 (编码器名, 参数列表)。Windows/Linux 无硬编时回退 libx264 veryfast。"""
+    global _encoder_cache
+    if _encoder_cache:
+        return _encoder_cache
+    name, args = 'libx264', ['-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency',
+                             '-b:v', '8M', '-maxrate', '8.5M', '-bufsize', '16M']
+    try:
+        enc = subprocess.run([ff, '-hide_banner', '-encoders'], capture_output=True,
+                             timeout=15).stdout.decode('utf-8', 'replace')
+        for cand, cand_args in (
+            ('h264_videotoolbox', ['-c:v', 'h264_videotoolbox', '-allow_sw', '1', '-realtime', '1',
+                                   '-b:v', '8M', '-maxrate', '8.5M', '-bufsize', '16M']),
+            ('h264_nvenc', ['-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr',
+                            '-b:v', '8M', '-maxrate', '8.5M', '-bufsize', '16M']),
+            ('h264_qsv', ['-c:v', 'h264_qsv', '-b:v', '8M', '-maxrate', '8.5M', '-bufsize', '16M']),
+            ('h264_amf', ['-c:v', 'h264_amf', '-usage', 'lowlatency',
+                          '-b:v', '8M', '-maxrate', '8.5M', '-bufsize', '16M']),
+        ):
+            if cand in enc:
+                name, args = cand, cand_args
+                break
+    except Exception:
+        pass
+    _encoder_cache = (name, args)
+    log('直播源 H.264 编码器: %s', name)
+    return _encoder_cache
 
 
 def _is_video_keyframe(chunk, start):
@@ -604,23 +686,26 @@ def live_start():
         if _live['ffmpeg'] and _live['ffmpeg'].poll() is None:
             return {'ok': True, 'already': True, 'sid': _live['sid']}
         ff = _find_ffmpeg()
-        hls_dir = '/tmp/xwr-hls'
+        hls_dir = TMP_DIR
         try:
             os.makedirs(hls_dir, exist_ok=True)
         except Exception:
             pass
         hls_path = os.path.join(hls_dir, 'live.m3u8')
         try:
-            fflog = open('/tmp/xwr-ffmpeg.log', 'wb')
+            fflog = open(FFMPEG_LOG, 'wb')
             # 注意: ffmpeg 的输出选项只作用于紧随其后的输出, 两个输出必须各自指定编码
-            # FLV 输出用 VideoToolbox 硬编限制平均码率 8Mbps (适配直播平台); HLS 局域网观看保持直通高码率
+            # FLV 输出按硬件能力选编码器限码率 8Mbps (适配直播平台); HLS 局域网观看保持直通高码率
+            enc_name, enc_args = _select_h264_encoder(ff)
+            # 输入硬解 (失败 ffmpeg 自动回退软解)
+            hwaccel = (['-hwaccel', 'videotoolbox'] if sys.platform == 'darwin' else
+                       ['-hwaccel', 'd3d11va'] if IS_WINDOWS else [])
             proc = subprocess.Popen(
                 [ff, '-hide_banner', '-loglevel', 'info',
-                 '-hwaccel', 'videotoolbox',
+                 *hwaccel,
                  '-fflags', '+genpts', '-f', 'matroska', '-i', 'pipe:0',
                  '-map', '0:v:0', '-map', '0:a:0',
-                 '-c:v', 'h264_videotoolbox', '-allow_sw', '1', '-realtime', '1',
-                 '-b:v', '8M', '-maxrate', '8.5M', '-bufsize', '16M',
+                 *enc_args,
                  '-c:a', 'aac', '-b:a', '128k',
                  '-f', 'flv', 'pipe:1',
                  '-map', '0:v:0', '-map', '0:a:0',
@@ -658,8 +743,8 @@ def live_stop():
             except Exception:
                 pass
     try:
-        for f in os.listdir('/tmp/xwr-hls'):
-            os.unlink(os.path.join('/tmp/xwr-hls', f))
+        for f in os.listdir(TMP_DIR):
+            os.unlink(os.path.join(TMP_DIR, f))
     except Exception:
         pass
     log('直播源已停止')
@@ -984,7 +1069,7 @@ class HlsHandler(http.server.BaseHTTPRequestHandler):
             self.send_header('Content-Length', '0')
             self.end_headers()
             return
-        full = os.path.join('/tmp/xwr-hls', name)
+        full = os.path.join(TMP_DIR, name)
         if not os.path.isfile(full):
             self.send_response(404)
             self.send_header('Content-Length', '0')
@@ -1010,11 +1095,57 @@ def start_hls_server():
         log('HLS 服务启动失败(8978 被占用?): %s', e)
 
 
+def register_windows_protocol():
+    """Windows: 注册 ms-xal:// 协议处理器, 登录回调自动转交本地服务 (HKCU, 无需管理员)。"""
+    if not IS_WINDOWS:
+        return
+    python = sys.executable.replace('python.exe', 'pythonw.exe')
+    if not os.path.isfile(python):
+        python = sys.executable
+    cmd = '"%s" "%s" --auth-code "%%1"' % (python, os.path.abspath(__file__))
+    for key in ('Software\\Classes\\ms-xal-000000004c20a908',
+                'Software\\Classes\\ms-xal-000000004c20a908\\DefaultIcon',
+                'Software\\Classes\\ms-xal-000000004c20a908\\shell\\open\\command'):
+        subprocess.run(['reg', 'add', 'HKCU\\' + key, '/f'], capture_output=True)
+    subprocess.run(['reg', 'add', 'HKCU\\Software\\Classes\\ms-xal-000000004c20a908', '/ve',
+                    '/d', 'url:Xbox Web Remote Login', '/f'], capture_output=True)
+    subprocess.run(['reg', 'add', 'HKCU\\Software\\Classes\\ms-xal-000000004c20a908\\URL Protocol', '/f'],
+                   capture_output=True)
+    subprocess.run(['reg', 'add', 'HKCU\\Software\\Classes\\ms-xal-000000004c20a908\\shell\\open\\command',
+                    '/ve', '/d', cmd, '/f'], capture_output=True)
+    log('已注册 ms-xal:// 登录回调协议 (Windows)')
+
+
+def handle_auth_code_arg():
+    """python server.py --auth-code "<ms-xal://...>" : 把回调地址转交运行中的服务后退出。"""
+    if len(sys.argv) >= 3 and sys.argv[1] == '--auth-code':
+        url = sys.argv[2]
+        try:
+            body = json.dumps({'code': url}).encode()
+            conn = http.client.HTTPConnection('127.0.0.1', PORT, timeout=20)
+            conn.request('POST', '/api/auth/code', body=body,
+                         headers={'Content-Type': 'application/json'})
+            resp = conn.getresponse()
+            ok = resp.status == 200 and b'"ok"' in resp.read()
+            conn.close()
+        except Exception:
+            ok = False
+        if IS_WINDOWS:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                0, '登录成功！请回到串流页面' if ok else '处理失败：请确认服务正在运行后重试',
+                'Xbox 网页串流', 0x40)
+        sys.exit(0)
+
+
 def main():
+    handle_auth_code_arg()
     load_tokens()
     if not os.path.isdir(WWW_DIR):
         log('缺少 www/ 目录, 请保持文件夹完整')
         sys.exit(1)
+    if IS_WINDOWS:
+        register_windows_protocol()
     start_hls_server()
     httpd = http.server.ThreadingHTTPServer(('127.0.0.1', PORT), Handler)
     log('Xbox 网页串流服务已启动: http://127.0.0.1:%d  (Ctrl+C 退出)', PORT)

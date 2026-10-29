@@ -20,7 +20,7 @@ LSREG="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServic
 [ -x "$LSREG" ] && "$LSREG" -f "$DIR/XboxLoginHelper.app" >/dev/null 2>&1
 
 # 后台启动服务, 日志留在本窗口
-"${AUTOPY:-python3}" server.py &
+python3 server.py &
 SERVER_PID=$!
 
 # 等服务就绪
