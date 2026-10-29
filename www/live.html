@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Xbox 直播窗口</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;
+    font-family:-apple-system,"PingFang SC",sans-serif}
+  #live{width:100%;height:100%;object-fit:contain;background:#000;display:block}
+  #hud{position:fixed;top:10px;left:12px;color:#fff;font-size:12px;opacity:.75;
+    background:rgba(0,0,0,.55);padding:4px 10px;border-radius:8px;transition:opacity .3s;
+    pointer-events:none}
+  #hud.off{opacity:0}
+  #close{position:fixed;top:8px;right:10px;background:rgba(0,0,0,.6);color:#fff;
+    border:1px solid rgba(255,255,255,.25);border-radius:8px;padding:5px 12px;
+    font-size:13px;cursor:pointer;display:none}
+  #tip{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);color:#bbb;
+    font-size:13px;background:rgba(0,0,0,.6);padding:6px 16px;border-radius:10px}
+</style>
+</head>
+<body>
+<video id="live" autoplay playsinline></video>
+<div id="hud">🔴 直播窗口 — 用直播伴侣「窗口捕获」选取本窗口</div>
+<button id="close">关闭直播窗口</button>
+<div id="tip">把本窗口作为「窗口捕获」源添加到抖音直播伴侣 · 鼠标移开 3 秒后自动隐藏提示</div>
+<script>
+'use strict';
+const v = document.getElementById('live');
+const hud = document.getElementById('hud');
+const tip = document.getElementById('tip');
+const closeBtn = document.getElementById('close');
+
+/* 从主窗口的串流播放器里拿到同一路 MediaStream */
+let attached = false, audioTakenOver = false;
+function tryAttach(){
+  if (attached) return;
+  try{
+    const opener = window.opener;
+    const src = opener && opener.document.querySelector('#streamHolder video');
+    if (src && src.srcObject){
+      v.srcObject = src.srcObject;
+      // 接管音频: 静音主窗口, 本窗口出声 (直播伴侣抓系统声音即可拿到)
+      if (opener.xwrAudioTakeover) { opener.xwrAudioTakeover(true); audioTakenOver = true; }
+      markAttached();
+      return;
+    }
+  }catch(e){}
+  if (!attached) setTimeout(tryAttach, 800);
+}
+/* 主页面直接注入画面流后调用 (现代浏览器弹窗无 opener, 注入是主路径) */
+function markAttached(){
+  attached = true;
+  v.play().catch(()=>{});
+  hud.textContent = '🔴 直播窗口 · 画面+声音已接入';
+  setTimeout(()=>hud.classList.add('off'), 2500);
+  setTimeout(()=>tip.style.display='none', 6000);
+}
+window.__markAttached = markAttached;
+window.__markTakenOver = ()=>{ audioTakenOver = true; markAttached(); };
+tryAttach();
+
+/* 关闭/窗口关闭时把音频还给主窗口 */
+function release(){
+  try{
+    if (audioTakenOver && window.opener && window.opener.xwrAudioTakeover){
+      window.opener.xwrAudioTakeover(false);
+    }
+  }catch(e){}
+}
+window.addEventListener('beforeunload', release);
+closeBtn.onclick = ()=>{ release(); window.close(); };
+
+/* 鼠标活动时显示 HUD 和关闭按钮, 静止 3 秒隐藏 */
+let hideTimer = null;
+function poke(){
+  hud.classList.remove('off');
+  closeBtn.style.display = 'block';
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(()=>{
+    hud.classList.add('off');
+    closeBtn.style.display = 'none';
+  }, 3000);
+}
+document.addEventListener('mousemove', poke);
+document.addEventListener('mousedown', poke);
+poke();
+
+/* 断流检测 */
+setInterval(()=>{
+  if (attached && v.readyState < 2 && !v.videoWidth){
+    hud.classList.remove('off');
+    hud.textContent = '⚠️ 串流未连接 — 请先在主页面开始串流';
+  }
+}, 2000);
+</script>
+</body>
+</html>

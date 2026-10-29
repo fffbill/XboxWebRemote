@@ -1,0 +1,13 @@
+# 令牌文件绝不入库 (含微软账号凭据)
+tokens*.json
+.tokens-*.tmp
+
+# 运行时产物
+__pycache__/
+*.log
+.DS_Store
+handler.log
+
+# 45MB 静态 ffmpeg 不入库, 见 README「ffmpeg 下载」
+bin/ffmpeg
+bin/

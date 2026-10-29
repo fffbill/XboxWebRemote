@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Xbox 网页串流</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#171c24; --panel2:#1e2530; --line:#2a3341;
+    --fg:#e8edf4; --dim:#8b97a8; --accent:#52d053; --xbox:#107c10; --warn:#e0a03a; --err:#e05a5a;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",Roboto,sans-serif;}
+  button{font:inherit;border:none;border-radius:8px;cursor:pointer;transition:filter .15s, opacity .15s}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button:not(:disabled):hover{filter:brightness(1.15)}
+  .btn{padding:10px 18px;background:var(--xbox);color:#fff;font-weight:600}
+  .btn.ghost{background:var(--panel2);color:var(--fg);border:1px solid var(--line)}
+  .btn.small{padding:6px 12px;font-size:13px}
+  .view{display:none;min-height:100vh}
+  .view.active{display:flex;flex-direction:column}
+
+  /* ---------- 登录 ---------- */
+  #view-login{align-items:center;justify-content:center;gap:28px;padding:40px}
+  .logo{display:flex;align-items:center;gap:14px}
+  .logo img.xlogo{width:44px;height:44px}
+  .logo h1{font-size:26px;margin:0;font-weight:700}
+  .logo small{display:block;color:var(--dim);font-weight:400;font-size:13px;margin-top:3px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:28px;width:min(430px,92vw)}
+  .steps{color:var(--dim);font-size:14px;line-height:1.9}
+  .steps b{color:var(--fg)}
+  .steps a{color:#6db96d}
+  .msg{border-radius:8px;padding:10px 14px;font-size:14px;margin-top:12px;display:none}
+  .msg.err{display:block;background:rgba(224,90,90,.12);border:1px solid rgba(224,90,90,.4);color:#f0a0a0}
+  .msg.info{display:block;background:rgba(82,208,83,.1);border:1px solid rgba(82,208,83,.35);color:#a8e0a8}
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--dim);
+    border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;vertical-align:-2px;margin-right:8px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* ---------- 主机列表 ---------- */
+  #view-consoles{padding:0}
+  .topbar{display:flex;align-items:center;gap:14px;padding:16px 24px;border-bottom:1px solid var(--line)}
+  .topbar h2{margin:0;font-size:19px;flex:1}
+  .console-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:18px;padding:24px}
+  .console-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;
+    display:flex;flex-direction:column;gap:12px}
+  .console-head{display:flex;align-items:center;gap:14px}
+  .console-img{height:96px;width:86px;object-fit:contain;flex:none;
+    filter:drop-shadow(0 4px 10px rgba(0,0,0,.5))}
+  .console-img.off{filter:grayscale(.85) brightness(.55) drop-shadow(0 4px 10px rgba(0,0,0,.5))}
+  .console-img.small{height:56px;width:56px}
+  .console-card .name{font-size:17px;font-weight:700}
+  .console-card .sub{color:var(--dim);font-size:12.5px;word-break:break-all}
+  .badge{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;border-radius:99px;
+    padding:3px 10px;border:1px solid var(--line);color:var(--dim);width:max-content}
+  .badge .dot{width:8px;height:8px;border-radius:50%;background:#666}
+  .badge.On .dot{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+  .badge.On{color:#a8e0a8;border-color:rgba(82,208,83,.4)}
+  .badge.Standby .dot{background:var(--warn)}
+  .empty{color:var(--dim);text-align:center;padding:80px 20px;line-height:2}
+
+  /* ---------- 串流 ---------- */
+  #view-stream{position:fixed;inset:0;background:#000}
+  #streamHolder{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+  #streamHolder video{width:100%;height:100%;object-fit:contain;background:#000}
+  .stream-top{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:10px;
+    padding:10px 14px;background:linear-gradient(rgba(0,0,0,.75),transparent);
+    opacity:1;transition:opacity .3s;z-index:5}
+  .stream-top.hidden{opacity:0;pointer-events:none}
+  .pill{background:rgba(20,25,33,.85);border:1px solid var(--line);border-radius:99px;
+    padding:5px 14px;font-size:13px;display:flex;align-items:center;gap:8px}
+  .pill .dot{width:8px;height:8px;border-radius:50%;background:var(--warn)}
+  .pill.good .dot{background:var(--accent)}
+  .pill.bad .dot{background:var(--err)}
+  .spacer{flex:1}
+  .icon-btn{background:rgba(20,25,33,.85);border:1px solid var(--line);color:var(--fg);
+    width:36px;height:36px;border-radius:10px;font-size:16px;line-height:1}
+  #stageMsg{position:absolute;inset:0;display:flex;flex-direction:column;gap:14px;align-items:center;
+    justify-content:center;color:var(--dim);font-size:15px;background:rgba(10,12,16,.6);z-index:4;text-align:center;padding:20px}
+  #stageMsg .big{font-size:20px;color:var(--fg);font-weight:600}
+
+  /* 统计面板 */
+  #statsPanel{position:absolute;right:14px;top:60px;width:320px;background:rgba(13,17,23,.92);
+    border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:12.5px;
+    font-family:ui-monospace,Menlo,monospace;z-index:6;display:none;line-height:1.8}
+  #statsPanel.show{display:block}
+  #statsPanel .verdict{font-size:15px;font-weight:700;padding:6px 0;border-bottom:1px solid var(--line);margin-bottom:6px}
+  #statsPanel .ok{color:var(--accent)} #statsPanel .mid{color:var(--warn)} #statsPanel .badc{color:var(--err)}
+  #statsPanel table{width:100%;border-collapse:collapse}
+  #statsPanel td{padding:1px 0;vertical-align:top}
+  #statsPanel td:first-child{color:var(--dim);padding-right:10px;white-space:nowrap}
+
+  /* 键位说明 */
+  #keyHelp{position:absolute;left:50%;transform:translateX(-50%);bottom:20px;background:rgba(13,17,23,.92);
+    border:1px solid var(--line);border-radius:12px;padding:12px 22px;z-index:6;display:none;
+    font-size:13px;color:var(--dim);text-align:center;line-height:2}
+  #keyHelp.show{display:block}
+  kbd{background:var(--panel2);border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;
+    padding:1px 7px;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--fg)}
+  .chip{background:var(--panel2);border:1px solid var(--line);color:var(--dim);border-radius:99px;
+    padding:3px 12px;font-size:12px}
+  .chip.on{background:rgba(82,208,83,.15);border-color:rgba(82,208,83,.5);color:#a8e0a8}
+
+  /* 直播源面板 */
+  #srcPanel{position:absolute;right:14px;top:60px;width:340px;background:rgba(13,17,23,.95);
+    border:1px solid var(--line);border-radius:12px;padding:16px;z-index:7;display:none;font-size:13px;line-height:1.9}
+  #srcPanel.show{display:block}
+  #srcPanel h4{margin:0 0 8px;font-size:14px}
+  #srcUrl{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+    padding:8px 10px;color:#a8e0a8;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;
+    box-sizing:border-box;user-select:all}
+  #srcPanel .hint{color:var(--dim);font-size:12px;margin-top:8px;line-height:1.7}
+
+  #toast{position:fixed;left:50%;transform:translateX(-50%);top:18px;background:rgba(20,25,33,.95);
+    border:1px solid var(--line);border-radius:10px;padding:10px 20px;font-size:14px;z-index:99;
+    opacity:0;pointer-events:none;transition:opacity .3s}
+  #toast.show{opacity:1}
+</style>
+</head>
+<body>
+
+<!-- ============ 登录 ============ -->
+<section id="view-login" class="view active">
+  <div class="logo">
+    <img class="xlogo" src="assets/xbox-green.svg" alt="">
+    <h1>Xbox 网页串流<small>浏览器内 Remote Play · 局域网/IPv6 直连优先</small></h1>
+  </div>
+  <div class="card" id="loginCard">
+    <div id="loginIdle">
+      <p style="margin:0 0 16px;color:var(--dim);font-size:14px">
+        使用微软账号设备码登录。令牌只保存在本机 <code>tokens.json</code>，用于与你自己的 Xbox 建立串流。</p>
+      <button class="btn" style="width:100%" id="btnLogin">登录微软账号</button>
+    </div>
+    <div id="loginWaiting" style="display:none">
+      <div class="steps">
+        1. 打开 <b><a id="xalLink" target="_blank" rel="noopener">微软登录页 ↗</a></b>，用绑定主机的账号登录<br>
+        2. 登录后浏览器会弹窗询问「打开 "Xbox网页串流" 吗？」——点<b>「打开」</b><br>
+        3. 本页会自动完成登录（看到右上角系统通知即成功）
+      </div>
+      <div style="text-align:center;color:var(--dim);font-size:13px;margin-top:14px"><span class="spinner"></span><span id="loginStatus">等待登录完成…</span></div>
+      <div style="color:var(--dim);font-size:12.5px;margin-top:10px;line-height:1.8">
+        没有弹窗？可能是登录助手未注册：双击一次文件夹里的 <b>XboxLoginHelper.app</b> 再重试。<br>
+        仍不行可手动兜底：登录后把浏览器地址栏 <code>ms-xal-…</code> 开头的完整地址复制到下面。
+      </div>
+      <input id="xalCode" type="text" placeholder="手动兜底：粘贴 ms-xal://… 开头的完整地址"
+        style="width:100%;margin-top:12px;padding:10px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--fg);font-size:13px;box-sizing:border-box">
+      <button class="btn" style="width:100%;margin-top:10px" id="btnCode">手动完成登录</button>
+      <button class="btn ghost small" style="margin-top:8px" id="btnCancelLogin">取消 / 重新发起</button>
+    </div>
+    <div class="msg" id="loginMsg"></div>
+  </div>
+</section>
+
+<!-- ============ 主机列表 ============ -->
+<section id="view-consoles" class="view">
+  <div class="topbar">
+    <div class="logo" style="gap:10px"><img class="xlogo" style="width:28px;height:28px" src="assets/xbox-green.svg" alt=""><h2>我的 Xbox 主机</h2></div>
+    <button class="btn ghost small" id="btnRefresh">刷新</button>
+    <button class="btn ghost small" id="btnLogout">退出登录</button>
+  </div>
+  <div class="console-grid" id="consoleGrid"></div>
+</section>
+
+<!-- ============ 串流 ============ -->
+<section id="view-stream" class="view">
+  <div id="streamHolder"></div>
+  <div id="liveStage" style="display:none;position:absolute;inset:0;background:#000;z-index:20">
+    <video id="liveStageVideo" autoplay playsinline style="width:100%;height:100%;object-fit:contain;background:#000;display:block"></video>
+    <div id="liveStageTip" style="position:absolute;top:12px;left:14px;color:#fff;font-size:13px;
+      background:rgba(0,0,0,.6);padding:6px 14px;border-radius:9px;transition:opacity .4s">🔴 页内直播画面 — 直播伴侣选「窗口捕获」抓本浏览器窗口 · 按 Esc 或点击右上角 ✕ 退出</div>
+    <button id="liveStageClose" style="position:absolute;top:10px;right:12px;background:rgba(0,0,0,.6);
+      color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:8px;padding:5px 12px;font-size:13px;
+      cursor:pointer;display:none">✕ 退出直播画面</button>
+  </div>
+  <div id="stageMsg"><div class="big" id="stageTitle">正在连接…</div><div id="stageSub"></div></div>
+  <div class="stream-top" id="streamTop">
+    <div class="pill" id="statePill"><span class="dot"></span><span id="stateText">…</span></div>
+    <div class="spacer"></div>
+    <div class="pill" id="gpPill" style="display:none"></div>
+    <div class="pill" id="netPill" style="display:none"></div>
+    <button class="icon-btn" id="btnStats" title="连接统计">📊</button>
+    <button class="icon-btn" id="btnLive" title="直播模式：弹出画面窗口给直播伴侣捕获">🔴</button>
+    <button class="icon-btn" id="btnSource" title="直播源：生成拉流地址给 OBS/直播助手">📡</button>
+    <button class="icon-btn" id="btnKeys" title="键位说明">⌨️</button>
+    <button class="icon-btn" id="btnFull" title="全屏">⛶</button>
+    <button class="icon-btn" id="btnStop" title="断开并返回">✕</button>
+  </div>
+  <div id="statsPanel"></div>
+  <div id="srcPanel">
+    <h4>📡 直播源 <span id="srcState" style="color:var(--warn);font-size:12px">未推流</span></h4>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <button class="chip on" id="srcModeFlv">FLV · 本机低延迟</button>
+      <button class="chip" id="srcModeHls">HLS · 局域网设备</button>
+    </div>
+    <input id="srcUrl" readonly value="http://127.0.0.1:8977/live.flv">
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn small" style="flex:1" id="btnCopySrc">一键复制地址</button>
+      <button class="btn ghost small" id="btnSrcToggle">开始推流</button>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:10px;color:var(--dim);font-size:12.5px;cursor:pointer">
+      <input type="checkbox" id="srcHideVideo"> 推流时隐藏页面串流画面（省 GPU，不影响推流与串流会话）
+    </label>
+    <div class="hint" id="srcHint"></div>
+  </div>
+  <div id="keyHelp">
+    <kbd>Enter</kbd>=A　<kbd>Backspace</kbd>=B　<kbd>X</kbd>=X　<kbd>Y</kbd>=Y　方向键=十字键<br>
+    <kbd>[</kbd>/<kbd>]</kbd>=LB/RB　<kbd>-</kbd>/<kbd>=</kbd>=LT/RT　<kbd>L</kbd>/<kbd>R</kbd>=摇杆按下<br>
+    <kbd>M</kbd>=Menu　<kbd>V</kbd>=View　<kbd>N</kbd>=Nexus　·　USB/蓝牙手柄即插即用　·　摇杆操作需实体手柄
+  </div>
+</section>
+
+<div id="toast"></div>
+
+<script src="lib/xCloudPlayer.min.js"></script>
+<script>
+'use strict';
+/* webpack 打包产物挂在 .default 下 */
+const XCP = window.xCloudPlayer.default || window.xCloudPlayer;
+
+/* =============================== 画质选项 =============================== */
+/* osName 决定主机给的画质档位 (XStreaming 同款):
+   android=720p, windows=1080p, tizen=1080P-HQ/1440p (三星电视客户端, 主机给最高码率) */
+const QUALITIES = [
+  {id:'720p',  label:'720p',       os:'android'},
+  {id:'1080p', label:'1080p',      os:'windows'},
+  {id:'1440p', label:'1440p (HQ)', os:'tizen'},
+];
+let quality = localStorage.getItem('xwr_quality') || '1080p';
+if(!QUALITIES.some(q=>q.id===quality)) quality = '1080p';
+const curQuality = ()=>QUALITIES.find(q=>q.id===quality);
+
+function deviceInfoFor(q){
+  return JSON.stringify({
+    appInfo:{ env:{ clientAppId:'www.xbox.com', clientAppType:'browser', clientAppVersion:'29.9.35',
+      clientSdkVersion:'10.6.8', httpEnvironment:'prod', sdkInstallId:'' }},
+    dev:{ hw:{ make:'Microsoft', model:'unknown', platformType:'desktop', sdktype:'web' },
+      os:{ name:q.os, ver:'22631.2715', platform:'desktop' },
+      displayInfo:{ dimensions:{ widthInPixels:4096, heightInPixels:2160 },
+        pixelDensity:{ dpiX:1, dpiY:1 }},
+      browser:{ browserName:'edge', browserVersion:'140.0.3485.66' }}
+  });
+}
+
+/* 劫持 fetch: 对发往串流网关的请求注入画质 — 替换 X-MS-Device-Info 头,
+   并把 play 请求体 settings.osName 换成所选档位 (库内写死 windows, 只能在此改) */
+const _realFetch = window.fetch.bind(window);
+window.fetch = function(url, opts){
+  try{
+    const u = typeof url === 'string' ? url : (url && url.url) || '';
+    if(opts && opts.headers && /\/v[56]\//.test(u)){
+      const h = opts.headers;
+      const key = Object.keys(h).find(k=>k.toLowerCase()==='x-ms-device-info');
+      if(key) h[key] = deviceInfoFor(curQuality());
+      if(/\/sessions\/home\/play/.test(u) && opts.body){
+        const body = JSON.parse(opts.body);
+        if(body.settings){ body.settings.osName = curQuality().os; opts.body = JSON.stringify(body); }
+      }
+    }
+  }catch(e){ console.error('quality inject', e); }
+  return _realFetch(url, opts);
+};
+
+/* =============================== 工具 =============================== */
+const $ = id => document.getElementById(id);
+const DEVICE_INFO = JSON.stringify({
+  appInfo:{ env:{ clientAppId:'www.xbox.com', clientAppType:'browser', clientAppVersion:'21.1.98',
+    clientSdkVersion:'8.5.3', httpEnvironment:'prod', sdkInstallId:'' }},
+  dev:{ hw:{ make:'Microsoft', model:'unknown', sdktype:'web' },
+    os:{ name:'windows', ver:'22631.2715', platform:'desktop' },
+    displayInfo:{ dimensions:{ widthInPixels:1920, heightInPixels:1080 },
+      pixelDensity:{ dpiX:2, dpiY:2 }},
+    browser:{ browserName:'chrome', browserVersion:'131.0' }}
+});
+
+function toast(text, ms=2600){
+  const t = $('toast'); t.textContent = text; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove('show'), ms);
+}
+function showView(id){
+  for(const v of document.querySelectorAll('.view')) v.classList.toggle('active', v.id===id);
+}
+function msg(el, text, cls='err'){ el.textContent=text; el.className='msg '+cls; }
+function clearMsg(el){ el.className='msg'; el.textContent=''; }
+
+function isPrivateIp(a){
+  if(a.includes(':')) return /^(fe80|fd|fc)/i.test(a);
+  const p=a.split('.'); return p[0]==='10'||(p[0]==='172'&&+p[1]>=16&&+p[1]<=31)||(p[0]==='192'&&p[1]==='168')||p[0]==='127';
+}
+function isV6(a){ return a.includes(':'); }
+
+/* =============================== 登录 (XAL/SISU) =============================== */
+
+async function boot(){
+  fetchLanIp();
+  try{
+    const r = await fetch('/api/auth/status'); const d = await r.json();
+    if(d.authenticated) enterConsoles(); else showView('view-login');
+  }catch(e){ showView('view-login'); msg($('loginMsg'),'无法连接本地服务，请确认 server.py 正在运行'); }
+}
+
+$('btnLogin').onclick = async () => {
+  clearMsg($('loginMsg'));
+  $('btnLogin').disabled = true;
+  try{
+    const r = await fetch('/api/auth/start', {method:'POST'});
+    const d = await r.json();
+    if(!d.url) throw new Error(d.error || '发起登录失败');
+    $('xalLink').href = d.url;
+    $('loginIdle').style.display='none';
+    $('loginWaiting').style.display='block';
+    pollAuthStatus();
+  }catch(e){
+    msg($('loginMsg'), '发起登录失败：'+e.message+'（需要能访问 login.live.com / xboxlive.com）');
+    $('btnLogin').disabled = false;
+  }
+};
+
+/* 登录助手收到回调后会自动完成, 这里轮询状态自动进入下一步 */
+let authPollTimer = null;
+function pollAuthStatus(){
+  clearTimeout(authPollTimer);
+  authPollTimer = setTimeout(async ()=>{
+    try{
+      const r = await fetch('/api/auth/status'); const d = await r.json();
+      if(d.authenticated){
+        $('loginStatus').textContent = '登录成功，正在进入…';
+        clearTimeout(authPollTimer);
+        setTimeout(enterConsoles, 500);
+        return;
+      }
+    }catch(e){}
+    if($('loginWaiting').style.display !== 'none') pollAuthStatus();
+  }, 2000);
+}
+
+$('btnCode').onclick = async () => {
+  const v = $('xalCode').value.trim();
+  if(!v){ msg($('loginMsg'),'请先粘贴登录后浏览器跳转到的完整地址'); return; }
+  clearMsg($('loginMsg'));
+  $('btnCode').disabled = true;
+  $('btnCode').textContent = '正在完成登录…';
+  try{
+    const r = await fetch('/api/auth/code', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({code:v})});
+    const d = await r.json();
+    if(d.status === 'ok'){ enterConsoles(); return; }
+    throw new Error(d.error || JSON.stringify(d).slice(0, 200));
+  }catch(e){
+    msg($('loginMsg'), '登录失败：'+e.message);
+    $('btnCode').disabled = false;
+    $('btnCode').textContent = '完成登录';
+  }
+};
+
+$('btnCancelLogin').onclick = () => {
+  clearTimeout(authPollTimer);
+  $('loginIdle').style.display='block'; $('loginWaiting').style.display='none';
+  $('btnLogin').disabled=false; $('xalCode').value='';
+  $('btnCode').disabled=false; $('btnCode').textContent='手动完成登录';
+};
+
+$('btnLogout').onclick = async () => {
+  if(!confirm('退出登录并删除本机保存的令牌？')) return;
+  await fetch('/api/auth/logout', {method:'POST'});
+  location.reload();
+};
+
+/* =============================== 主机列表 =============================== */
+let consolesCache = [];
+
+async function enterConsoles(){
+  showView('view-consoles');
+  await refreshConsoles();
+}
+
+async function refreshConsoles(){
+  const grid = $('consoleGrid');
+  grid.innerHTML = '<div class="empty"><span class="spinner"></span>正在获取主机列表…</div>';
+  try{
+    const r = await fetch('/v6/servers/home?mr=50', {headers:{'Accept':'application/json','X-MS-Device-Info':DEVICE_INFO}});
+    if(r.status===401){ msg($('loginMsg'),'令牌已失效，请重新登录'); showView('view-login'); return; }
+    const d = await r.json();
+    consolesCache = d.results||[];
+    renderConsoles();
+  }catch(e){
+    grid.innerHTML = '<div class="empty">获取主机列表失败：'+e.message+'<br>请确认网络可访问 Xbox 服务后点“刷新”。</div>';
+  }
+}
+
+function renderConsoles(){
+  const grid = $('consoleGrid');
+  if(!consolesCache.length){
+    grid.innerHTML = '<div class="empty">没有找到已绑定的主机。<br>请在 Xbox 上用同一微软账号登录，并在<br>「设置-设备和串流」中启用远程串流后再刷新。</div>';
+    return;
+  }
+  grid.innerHTML = '';
+  for(const c of consolesCache){
+    const card = document.createElement('div'); card.className='console-card';
+    const type = {XboxSeriesX:'Series X', XboxSeriesS:'Series S', XboxOne:'Xbox One'}[c.consoleType]||c.consoleType;
+    const on = c.powerState==='On';
+    const pclass = on?'On':(c.powerState==='Off'?'Off':'Standby');
+    const imgMap = {XboxSeriesX:'assets/series-x.png', XboxSeriesS:'assets/series-s.png'};
+    const img = imgMap[c.consoleType] || 'assets/xbox-green.svg';
+    const imgCls = 'console-img' + (on?'':' off') + (imgMap[c.consoleType]?'':' small');
+    card.innerHTML = `
+      <div class="console-head">
+        <img class="${imgCls}" src="${img}" alt="${type}">
+        <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+          <div class="name">${c.deviceName}</div>
+          <div class="sub">${type} · ${c.serverId}</div>
+          <span class="badge ${pclass}"><span class="dot"></span>${powerText(c.powerState)}</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn streambtn" style="flex:1" data-id="${c.serverId}">${on?'开始串流':(c.powerState==='Off'?'开机并串流':'唤醒并串流')}</button>
+        <button class="btn ghost powerbtn" data-id="${c.serverId}" title="${on?'远程关机':'远程开机'}">${on?'⏻ 关机':'⏻ 开机'}</button>
+      </div>
+      <div class="quality-row" style="display:flex;align-items:center;gap:6px">
+        <span style="color:var(--dim);font-size:12px">画质</span>
+        ${QUALITIES.map(q=>`<button class="chip qchip ${q.id===quality?'on':''}" data-q="${q.id}">${q.label}</button>`).join('')}
+      </div>`;
+    card.querySelector('.streambtn').onclick = ()=>startFlow(c);
+    card.querySelector('.powerbtn').onclick = ()=>powerCommand(c, on?'off':'on', card.querySelector('.powerbtn'));
+    card.querySelectorAll('.qchip').forEach(ch=>{
+      ch.onclick = ()=>{
+        quality = ch.dataset.q;
+        localStorage.setItem('xwr_quality', quality);
+        card.querySelectorAll('.qchip').forEach(x=>x.classList.toggle('on', x.dataset.q===quality));
+        toast('画质已设为 '+curQuality().label+'（下次串流生效）');
+      };
+    });
+    grid.appendChild(card);
+  }
+}
+
+/* 远程开关机: 走 xccs.xboxlive.com 远程管理服务 (server.py /api/power) */
+async function powerCommand(c, action, btn){
+  btn.disabled = true; btn.textContent = '⏻ '+(action==='on'?'开机':'关机')+'中…';
+  toast('正在'+(action==='on'?'开机':'关机')+' '+c.deviceName+'…', 5000);
+  try{
+    const r = await fetch('/api/power', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({serverId:c.serverId, action})});
+    const d = await r.json();
+    if(!d.ok){ throw new Error(typeof d.detail==='string'?d.detail.slice(0,200):JSON.stringify(d.detail||d).slice(0,200)); }
+  }catch(e){
+    toast('⚠️ 命令发送失败: '+e.message, 5000);
+    await refreshConsoles();
+    return;
+  }
+  // 轮询主机状态直到符合预期 (最多 90s)
+  for(let i=0;i<30;i++){
+    await new Promise(r=>setTimeout(r, 3000));
+    try{
+      const r = await fetch('/v6/servers/home?mr=50', {headers:{'X-MS-Device-Info':DEVICE_INFO}});
+      const dd = await r.json();
+      const me = (dd.results||[]).find(x=>x.serverId===c.serverId);
+      if(me){
+        if(action==='on' && me.powerState==='On') break;
+        if(action==='off' && me.powerState!=='On') break;
+      }
+    }catch(e){}
+  }
+  await refreshConsoles();
+  toast((action==='on'?'✅ ':'✅ ')+c.deviceName+(action==='on'?' 已开机':' 已关机'));
+}
+function powerText(s){ return {On:'已开机', Off:'已关机', Standby:'待机', ConnectedStandby:'待机'}[s]||s; }
+
+async function startFlow(c){
+  showView('view-stream');
+  const off = c.powerState === 'Off';
+  if(c.powerState !== 'On'){
+    stage('正在唤醒 '+c.deviceName, '正在唤醒主机并建立串流会话：待机唤醒约需 30–120 秒，期间请勿关闭页面…');
+    // 同时发一个远程开机命令加速唤醒 (fire-and-forget)
+    fetch('/api/power', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({serverId:c.serverId, action:'on'})}).catch(()=>{});
+  }else{
+    stage('正在连接 '+c.deviceName, '');
+  }
+  await startStream(c.serverId, c.deviceName, false, off);
+}
+
+/* =============================== 串流 =============================== */
+let apiClient=null, stream=null, player=null, keepaliveTimer=null;
+let gamepadAttached=false, provTimer=null;
+
+/* 清掉这台主机在网关上的残留会话 */
+async function cleanupSessions(serverId){
+  let cleaned = 0;
+  try{
+    const r = await fetch('/v5/sessions/home/active', {headers:{'Accept':'application/json','X-MS-Device-Info':DEVICE_INFO}});
+    if(!r.ok) return 0;
+    const d = await r.json().catch(()=>null);
+    const list = (d && (d.sessions || d.results)) || [];
+    for(const s of list){
+      const target = s.sessionId || s.sessionID;
+      if(!target) continue;
+      if(serverId && s.serverId && s.serverId !== serverId) continue;
+      try{
+        const dr = await fetch('/v5/sessions/home/'+target, {method:'DELETE', headers:{'X-MS-Device-Info':DEVICE_INFO}});
+        if(dr.ok || dr.status===204) cleaned++;
+      }catch(e){}
+    }
+  }catch(e){}
+  return cleaned;
+}
+
+window.cleanupAndRetry = async (serverId, nameEnc)=>{
+  stage('正在清理残留会话…', '');
+  await cleanupSessions(serverId);
+  startStream(serverId, decodeURIComponent(nameEnc), true);
+};
+
+function stage(title, sub, isError){
+  $('stageTitle').textContent = title;
+  $('stageTitle').style.color = isError? 'var(--err)':'';
+  $('stageSub').innerHTML = sub||'';
+  $('stageMsg').style.display='flex';
+}
+function stageDone(){ $('stageMsg').style.display='none'; }
+function setState(t, cls){
+  $('stateText').textContent = t;
+  $('statePill').className = 'pill '+(cls||'');
+}
+
+async function startStream(serverId, name, isRetry, wasOff){
+  apiClient = new XCP.ApiClient({host: window.location.origin, locale: 'zh-CN'});
+  setState('请求会话… ('+curQuality().label+')','');
+  let resp;
+  try{
+    resp = await apiClient.startStream('home', serverId);
+  }catch(e){
+    resp = {errorDetails:{message:String(e && e.message || e)}};
+  }
+  // 该库在网关返回 4xx 时也可能正常 resolve; 成功时返回 Stream 对象, id 在 getSessionId()
+  const sid = resp && (typeof resp.getSessionId === 'function' ? resp.getSessionId() : resp.sessionId);
+  if(!resp || !sid){
+    const m = (resp && resp.errorDetails && (resp.errorDetails.message || resp.errorDetails.code)) || '';
+    const raw = m || JSON.stringify(resp).slice(0, 300);
+    if(!isRetry){
+      const cleaned = await cleanupSessions(serverId);
+      if(cleaned > 0){
+        toast('检测到残留会话，已清理，正在重试…');
+        return startStream(serverId, name, true);
+      }
+    }
+    stage('建立会话失败', raw +
+      (wasOff ? '<br>⚠️ 主机处于"已关机"状态：若为节能关机模式，远程无法唤醒，需手动开机一次再试。' : '') +
+      '<br>常见原因：残留会话占用（点下方按钮清理）、主机正被其他设备串流、远程串流未开启。<br>' +
+      '<button class="btn ghost small" style="margin-top:10px" onclick="cleanupAndRetry(\''+serverId+'\',\''+encodeURIComponent(name)+'\')">清理残留会话并重试</button>　' +
+      '<button class="btn ghost small" style="margin-top:10px" onclick="backToConsoles()">返回</button>', true);
+    return;
+  }
+  stream = resp;
+  stage('正在准备会话…', '等待主机分配串流会话（若主机在待机/唤醒中，可能需要 1–2 分钟）');
+
+  // 会话长时间不就绪则报错并清理, 避免卡死 (待机唤醒要给足时间)
+  clearTimeout(provTimer);
+  provTimer = setTimeout(async ()=>{
+    stage('连接超时', wasOff ? '主机长时间未唤醒。主机若处于节能关机模式，远程无法唤醒，请手动开机一次。'
+      : '会话长时间未就绪，已自动清理，可返回重试。', true);
+    try{ stream && stream.stop(); }catch(e){}
+  }, 300000);
+
+  stream.onProvisioned = () => {
+    clearTimeout(provTimer);
+    stage('会话已就绪', '正在协商 WebRTC 连接…');
+    startPlayer();
+    // 继续观察 ReadyToConnect 并发送 lpt 主机握手令牌
+    // (缺失它主机会在 ~5 分钟后主动断开; waitForState('Provisioned') 达成后库会停轮询, 需续看)
+    let msalSent = false;
+    const sendMsal = async () => {
+      if(msalSent || !stream) return; msalSent = true;
+      try{
+        const r = await fetch('/api/msal'); const d = await r.json();
+        if(!d.token) throw new Error(d.error||'无令牌');
+        await stream.sendMSALAuth(d.token);
+        console.log('[auth] 主机握手令牌(lpt)已发送');
+      }catch(e){ console.error('[auth] lpt 发送失败, 将重试', e); msalSent = false; }
+    };
+    stream.onReadyToConnect = ()=>sendMsal();
+    stream.waitForState('ReadyToConnect');
+    // 兜底: 已连接但迟迟没等到 ReadyToConnect 时也发
+    setTimeout(()=>{ if(player && player._peerConnection &&
+      player._peerConnection.connectionState==='connected') sendMsal(); }, 6000);
+    clearInterval(keepaliveTimer);
+    keepaliveTimer = setInterval(async ()=>{
+      try{
+        const r = await stream.sendKeepalive();
+        if(r && (r.code==='SessionNotActive'||r.code==='SessionNotFound')){
+          clearInterval(keepaliveTimer);
+          toast('会话已结束');
+          backToConsoles();
+        }
+      }catch(e){ /* 网络抖动忽略 */ }
+    }, 30000);
+  };
+  stream.onError = () => { /* 状态轮询错误, 连接层会给出提示 */ };
+  stream.waitForState('Provisioned');
+}
+
+async function startPlayer(){
+  player = new XCP.Player('streamHolder');
+
+  // 追加按所选画质的分辨率申报 (库写死 1080p; 后发的会覆盖, 主机以最后一条为准)
+  const DIMS = {'720p':[1280,720], '1080p':[1920,1080], '1440p':[2560,1440]};
+  const msgCh = player._channels.message;
+  const origSendConfig = msgCh.sendConfig.bind(msgCh);
+  msgCh.sendConfig = function(){
+    origSendConfig();
+    const d = DIMS[quality] || DIMS['1080p'];
+    this.send(JSON.stringify(this.generateMessage('/streaming/characteristics/dimensionschanged', {
+      horizontal:d[0], vertical:d[1], preferredWidth:d[0], preferredHeight:d[1],
+      safeAreaLeft:0, safeAreaTop:0, safeAreaRight:d[0], safeAreaBottom:d[1],
+      supportsCustomResolution:true,
+    })));
+    console.log('[quality] 已申报分辨率', d[0]+'x'+d[1], '('+curQuality().label+')');
+  };
+
+  setState('WebRTC 协商中 ('+curQuality().label+')','');
+  player.onConnectionStateChange(s=>{
+    setState(connText(s), s==='connected'?'good':(s==='failed'?'bad':''));
+    if(s==='connected'){
+      stageDone();
+      ensureGamepad();
+      startStats();
+      if(player.getAudioElement && player.getAudioElement()){
+        player.getAudioElement().play().catch(()=>{});
+      }
+    }
+    if(s==='failed'){ stage('连接失败','与主机的媒体通道建立失败。请检查本机与主机是否在同一网络，或查看统计面板。' +
+      '<br><button class="btn ghost small" style="margin-top:10px" onclick="backToConsoles()">返回</button>', true); stopStats(); }
+  });
+  player.setChatSdpHandler(offer=>{
+    stream.sendChatSDPOffer(offer).then(resp=>{
+      player.setRemoteOffer(JSON.parse(resp.exchangeResponse).sdp);
+    }).catch(e=>console.error('chat sdp', e));
+  });
+
+  const pc = player._peerConnection;
+
+  try{
+    const offer = await player.createOffer();
+    const sdpResp = await stream.sendSDPOffer(offer);
+    player.setRemoteOffer(JSON.parse(sdpResp.exchangeResponse).sdp);
+
+    // 等本地 ICE 候选取齐 (含 IPv6/多网卡), 再统一发给主机
+    const candidates = await gatherIce(pc);
+    const arr = candidates.map(c=>JSON.stringify({
+      candidate:c.candidate, sdpMid:c.sdpMid, sdpMLineIndex:c.sdpMLineIndex,
+      usernameFragment: c.usernameFragment||'' }));
+    const iceResp = await stream.sendIceCandidates(arr);
+    player.setRemoteIceCandidates(JSON.parse(iceResp.exchangeResponse));
+  }catch(e){
+    console.error(e);
+    stage('协商出错', String(e.message||e), true);
+  }
+}
+
+function connText(s){
+  return {new:'连接中…', connecting:'连接中…', connected:'已连接', disconnected:'已断开',
+    failed:'连接失败', closed:'已关闭'}[s]||s;
+}
+
+function gatherIce(pc, timeoutMs=6000){
+  return new Promise(resolve=>{
+    const got=[];
+    let settled=false;
+    const finish=()=>{
+      if(settled) return; settled=true;
+      clearTimeout(timer);
+      pc.removeEventListener('icecandidate', onCand);
+      pc.removeEventListener('icegatheringstatechange', onState);
+      resolve(got);
+    };
+    const onCand=e=>{ if(e.candidate) got.push(e.candidate); };
+    const onState=()=>{ if(pc.iceGatheringState==='complete') finish(); };
+    const timer=setTimeout(finish, timeoutMs);
+    pc.addEventListener('icecandidate', onCand);
+    pc.addEventListener('icegatheringstatechange', onState);
+    if(pc.iceGatheringState==='complete') finish();
+  });
+}
+
+function ensureGamepad(){
+  if(!player || gamepadAttached) return;
+  // 必须等 control 数据通道真正 open 再 attach, 否则 gamepadChanged 消息会被库静默丢弃,
+  // 主机端就永远不会创建虚拟手柄
+  const dc = player._channels && player._channels.control && player._channels.control._dataChannel;
+  if(dc && dc.readyState === 'open'){
+    gamepadAttached = true;
+    try{
+      window.__gp0 = new XCP.Gamepad(0, {enable_keyboard:true, enable_vibration:true});
+      window.__gp0.attach(player);
+      toast('🎮 手柄已挂载，可按手柄任意键激活');
+    }catch(e){ console.error('gamepad', e); }
+    return;
+  }
+  setTimeout(ensureGamepad, 500);
+}
+
+/* 手柄状态指示: Chrome 识别 / 通道 / 焦点 */
+function updateGpPill(){
+  const pill = $('gpPill');
+  if(!player){ pill.style.display='none'; return; }
+  const pads = [...(navigator.getGamepads()||[])].filter(g=>g);
+  const dc = player._channels && player._channels.control && player._channels.control._dataChannel;
+  const chOpen = !!(dc && dc.readyState==='open');
+  const pid = (window.__gp0 && window.__gp0.getPhysicalGamepadId) ? window.__gp0.getPhysicalGamepadId() : -1;
+  let txt, ok=true;
+  if(!document.hasFocus()){ txt='⚠️ 点击页面激活输入'; ok=false; }
+  else if(pads.length===0){ txt='⚠️ 手柄未识别·按手柄任意键'; ok=false; }
+  else if(pid<0){ txt='⚠️ 手柄已识别·再按一次按键'; ok=false; }
+  else if(!chOpen){ txt='⚠️ 手柄通道建立中…'; ok=false; }
+  else { txt='🎮 '+(pads[0].id||'controller').split('(')[0].trim().slice(0,24); }
+  pill.style.display='flex';
+  pill.textContent = txt;
+  pill.style.color = ok ? 'var(--accent)' : 'var(--warn)';
+  if(!ok) pokeTopbar(); // 状态异常时让工具栏保持可见
+}
+window.addEventListener('gamepadconnected', e=>toast('手柄已连接: '+e.gamepad.id));
+
+window.backToConsoles = async ()=>{
+  clearInterval(keepaliveTimer); clearTimeout(provTimer); stopStats();
+  try{ if(srcPushing) stopSourcePush(); }catch(e){}
+  try{ if(liveWin && !liveWin.closed) liveWin.close(); }catch(e){}
+  try{ exitLiveStage(); }catch(e){}
+  try{ window.xwrAudioTakeover(false); }catch(e){}
+  try{ window.__gp0 && window.__gp0.detach(); }catch(e){}
+  try{ player && player.destroy(); }catch(e){}
+  try{ stream && stream.stop && stream.stop(); }catch(e){}
+  player=null; stream=null; gamepadAttached=false;
+  showView('view-consoles');
+  refreshConsoles();
+};
+$('btnStop').onclick = ()=>backToConsoles();
+$('btnRefresh').onclick = ()=>refreshConsoles();
+
+/* ---------- 全屏 / 工具栏 / 面板 ---------- */
+$('btnFull').onclick = ()=>{
+  if(document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen().catch(()=>{});
+};
+$('btnStats').onclick = ()=>$('statsPanel').classList.toggle('show');
+$('btnKeys').onclick = ()=>$('keyHelp').classList.toggle('show');
+
+/* ---------- 直播源 (HTTP-FLV / HLS) ---------- */
+let srcRecorder = null, srcPushing = false, srcSid = null, srcToggling = false;
+let srcMode = localStorage.getItem('xwr_srcmode') || 'flv';
+let lanIp = '';
+
+function setSrcState(text, color){
+  const el = $('srcState');
+  el.textContent = text;
+  el.style.color = color || 'var(--warn)';
+}
+function srcUrlFor(mode){
+  return mode === 'hls' ? 'http://'+(lanIp||'本机IP')+':8978/hls/live.m3u8'
+                        : 'http://127.0.0.1:8977/live.flv';
+}
+function srcHintFor(mode){
+  return mode === 'hls'
+    ? '手机/平板/电视等局域网设备用浏览器或 HLS 播放器打开此地址即可观看（约 6–15 秒延迟）。HLS 服务只暴露画面流, 不含任何账号信息。'
+    : '在 OBS「媒体源」/ VLC / 支持流地址的直播助手里添加此地址（H.264+AAC，约 2–4 秒延迟）。推流由页面串流画面直接生成，不额外占用主机。';
+}
+function refreshSrcPanel(){
+  $('srcModeFlv').classList.toggle('on', srcMode==='flv');
+  $('srcModeHls').classList.toggle('on', srcMode==='hls');
+  $('srcUrl').value = srcUrlFor(srcMode);
+  $('srcHint').textContent = srcHintFor(srcMode);
+}
+$('srcModeFlv').onclick = ()=>{ srcMode='flv'; localStorage.setItem('xwr_srcmode',srcMode); refreshSrcPanel(); };
+$('srcModeHls').onclick = ()=>{ srcMode='hls'; localStorage.setItem('xwr_srcmode',srcMode); refreshSrcPanel(); };
+
+/* 推流时隐藏串流画面 (省 GPU) — 只藏显示, 不动 WebRTC 轨道与推流 */
+function applyHideVideo(hide){
+  try{
+    const vv = document.querySelector('#streamHolder video');
+    if (vv) vv.style.visibility = hide ? 'hidden' : '';
+  }catch(e){}
+}
+$('srcHideVideo').checked = localStorage.getItem('xwr_hidevideo') === '1';
+$('srcHideVideo').onchange = ()=>{
+  localStorage.setItem('xwr_hidevideo', $('srcHideVideo').checked ? '1' : '0');
+  if (srcPushing) applyHideVideo($('srcHideVideo').checked);
+};
+
+async function fetchLanIp(){
+  try{
+    const r = await fetch('/api/live/status'); const d = await r.json();
+    lanIp = d.lan_ip || '';
+    refreshSrcPanel();
+  }catch(e){}
+}
+
+$('btnSource').onclick = ()=>$('srcPanel').classList.toggle('show');
+$('btnCopySrc').onclick = ()=>{
+  const url = $('srcUrl').value;
+  (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject())
+    .then(()=>toast('✅ 直播源地址已复制: '+url))
+    .catch(()=>{
+      const i = $('srcUrl'); i.focus(); i.select();
+      document.execCommand('copy');
+      toast('✅ 直播源地址已复制: '+url);
+    });
+};
+
+async function startSourcePush(){
+  const mv = document.querySelector('#streamHolder video');
+  if (!mv || !mv.srcObject){ toast('请先开始串流'); return; }
+  // video 和 audio 可能挂在不同的 MediaStream 上 (WebRTC ontrack), 组合成一条完整流
+  const av = player && player.getAudioElement && player.getAudioElement();
+  const tracks = [
+    ...((mv.srcObject && mv.srcObject.getVideoTracks()) || []),
+    ...((av && av.srcObject && av.srcObject.getAudioTracks()) || []),
+    ...((mv.srcObject && mv.srcObject.getAudioTracks()) || []),
+  ];
+  if (!tracks.some(t=>t.kind==='audio')){ toast('未找到串流音频轨'); return; }
+  const mixed = new MediaStream(tracks);
+  let mime = ['video/webm;codecs="h264,opus"', 'video/webm;codecs=h264', 'video/webm']
+    .find(m=>window.MediaRecorder && MediaRecorder.isTypeSupported(m));
+  if (!mime){ toast('此浏览器不支持推流录制'); return; }
+  try{
+    const r = await fetch('/api/live/start', {method:'POST'});
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error||'启动失败');
+    srcSid = d.sid || null;
+  }catch(e){ toast('直播源启动失败: '+e.message); return; }
+  try{
+    srcRecorder = new MediaRecorder(mixed, {mimeType: mime, videoBitsPerSecond: 8000000});
+  }catch(e){
+    toast('推流录制器创建失败: '+(e && e.message || e));
+    fetch('/api/live/stop', {method:'POST'}).catch(()=>{});
+    srcSid = null;
+    return;
+  }
+  // 分片必须按序上传 (async fetch 并发会导致 WebM 分片乱序、下游流损坏)
+  let pushChain = Promise.resolve();
+  srcRecorder.ondataavailable = ev=>{
+    if (!srcPushing || !ev.data || !ev.data.size) return;
+    pushChain = pushChain.then(async ()=>{
+      if (!srcPushing) return;
+      try{
+        const r = await fetch('/api/live/chunk', {method:'POST', body: ev.data,
+          headers: srcSid ? {'X-Live-Sid': srcSid} : {}});
+        if (r.status === 409){ stopSourcePush(); }
+      }catch(e){}
+    });
+  };
+  srcRecorder.onstop = ()=>{ if(!srcPushing) setSrcState('已停止', 'var(--dim)'); };
+  srcRecorder.start(1000);
+  srcPushing = true;
+  $('btnSrcToggle').textContent = '停止推流';
+  setSrcState('推流中 · '+$('srcUrl').value.replace('http://',''), 'var(--accent)');
+  if ($('srcHideVideo').checked) applyHideVideo(true);
+  toast('📡 直播源已开启: '+$('srcUrl').value, 4000);
+}
+
+async function stopSourcePush(){
+  srcPushing = false;
+  try{ srcRecorder && srcRecorder.state !== 'inactive' && srcRecorder.stop(); }catch(e){}
+  srcRecorder = null;
+  applyHideVideo(false);
+  $('btnSrcToggle').textContent = '开始推流';
+  try{ await fetch('/api/live/stop', {method:'POST'}); }catch(e){}
+  srcSid = null;
+}
+
+$('btnSrcToggle').onclick = async ()=>{
+  if (srcToggling) return;   // 防连点: 停止/启动必须串行, 避免 stop/start 竞态误杀
+  srcToggling = true;
+  $('btnSrcToggle').disabled = true;
+  try{
+    if (srcPushing) await stopSourcePush();
+    else await startSourcePush();
+  }finally{
+    srcToggling = false;
+    $('btnSrcToggle').disabled = false;
+  }
+};
+refreshSrcPanel();
+
+/* ---------- 直播模式 ---------- */
+/* 音频接管: 直播窗口播放声音时静音本窗口, 关闭时还原 */
+window.xwrAudioTakeover = (take)=>{
+  try{
+    const av = player && player.getAudioElement && player.getAudioElement();
+    const vv = document.querySelector('#streamHolder video');
+    if (take){
+      if (av){ av._xwrPaused = av.paused; av.pause(); }
+      if (vv) vv.muted = true;
+    }else{
+      if (av && !av._xwrPaused) av.play().catch(()=>{});
+      if (vv) vv.muted = false;
+    }
+  }catch(e){}
+};
+let liveWin = null, liveInjectTimer = null, liveWatchTimer = null;
+/* ---------- 页内直播视图 (弹窗被拦时的兜底) ---------- */
+let liveStageOn = false, liveTipTimer = null;
+function enterLiveStage(){
+  if (liveStageOn) return;
+  const mv = document.querySelector('#streamHolder video');
+  if (!mv || !mv.srcObject){ toast('请先开始串流'); return; }
+  liveStageOn = true;
+  $('liveStageVideo').srcObject = mv.srcObject;
+  $('liveStage').style.display = 'block';
+  $('streamTop').style.display = 'none';
+  window.xwrAudioTakeover(true);
+  clearTimeout(liveTipTimer);
+  liveTipTimer = setTimeout(()=>$('liveStageTip').style.opacity='0', 5000);
+}
+function exitLiveStage(){
+  if (!liveStageOn) return;
+  liveStageOn = false;
+  $('liveStage').style.display = 'none';
+  $('liveStageVideo').srcObject = null;
+  $('streamTop').style.display = 'flex';
+  window.xwrAudioTakeover(false);
+}
+window.exitLiveStage = exitLiveStage;
+$('liveStageClose').onclick = exitLiveStage;
+document.addEventListener('mousemove', e=>{
+  if (liveStageOn){
+    $('liveStageClose').style.display = 'block';
+    $('liveStageTip').style.opacity = '1';
+    clearTimeout(liveTipTimer);
+    liveTipTimer = setTimeout(()=>{
+      $('liveStageClose').style.display = 'none';
+      $('liveStageTip').style.opacity = '0';
+    }, 3000);
+  }
+});
+document.addEventListener('keydown', e=>{ if (e.key==='Escape' && liveStageOn) exitLiveStage(); });
+$('btnLive').onclick = ()=>{
+  if (liveWin && !liveWin.closed){ liveWin.focus(); return; }
+  if (!player){ toast('请先开始串流'); return; }
+  liveWin = window.open('live.html','xwr_live','width=1280,height=720,menubar=no,toolbar=no,location=no,status=no');
+  if(!liveWin){ enterLiveStage(); return; }
+  // 主动注入画面流 (弹窗无 opener, 由持有引用的主页面塞入)
+  let injected = false;
+  clearInterval(liveInjectTimer);
+  liveInjectTimer = setInterval(()=>{
+    try{
+      if (liveWin.closed){ clearInterval(liveInjectTimer); return; }
+      if (injected) return;
+      const lv = liveWin.document.getElementById('live');
+      const mv = document.querySelector('#streamHolder video');
+      if (lv && mv && mv.srcObject){
+        lv.srcObject = mv.srcObject;
+        window.xwrAudioTakeover(true);
+        liveWin.__markTakenOver && liveWin.__markTakenOver();
+        injected = true;
+        clearInterval(liveInjectTimer);
+      }
+    }catch(e){ /* liveWin 未就绪, 下轮再试 */ }
+  }, 500);
+  // 直播窗口关闭时还原音频
+  clearInterval(liveWatchTimer);
+  liveWatchTimer = setInterval(()=>{
+    if (liveWin && liveWin.closed){
+      clearInterval(liveWatchTimer);
+      window.xwrAudioTakeover(false);
+    }
+  }, 1000);
+};
+
+let topbarTimer=null;
+function pokeTopbar(){
+  $('streamTop').classList.remove('hidden');
+  clearTimeout(topbarTimer);
+  topbarTimer=setTimeout(()=>$('streamTop').classList.add('hidden'), 3500);
+}
+document.addEventListener('mousemove', e=>{ if(e.clientY<70) pokeTopbar(); });
+pokeTopbar();
+
+/* =============================== 统计面板 =============================== */
+let statsTimer=null, lastBytes=0, lastTs=0;
+
+function classify(local, remote){
+  if(!remote) return ['…',''];
+  const rt = remote.candidateType||'', lt = local&&local.candidateType||'';
+  const ra = remote.address||'';
+  if(rt==='relay'||lt==='relay') return ['中继 RELAY','badc'];
+  if(isPrivateIp(ra)) return ['局域网直连 🎉','ok'];
+  if(isV6(ra)) return ['IPv6 直连','ok'];
+  if(rt==='host') return ['公网直连 (host)','ok'];
+  return ['NAT 穿透直连 (P2P)','ok'];
+}
+
+async function startStats(){
+  stopStats();
+  statsTimer = setInterval(pollStats, 1000);
+  pollStats();
+}
+function stopStats(){ clearInterval(statsTimer); statsTimer=null; }
+
+async function pollStats(){
+  const panel=$('statsPanel'), pill=$('netPill');
+  updateGpPill();
+  if(!player||!player._peerConnection){ return; }
+  let stats;
+  try{ stats = await player._peerConnection.getStats(); }catch(e){ return; }
+  let pair=null;
+  const byId={};
+  stats.forEach(r=>{ byId[r.id]=r; });
+  stats.forEach(r=>{
+    if(r.type==='candidate-pair' && r.state==='succeeded' &&
+      (r.nominated || (r.packetsReceived||0)>0)){
+      if(!pair || ((r.packetsReceived||0)>(pair.packetsReceived||0))) pair=r;
+    }
+  });
+  let rows=[], verdict=['等待连接…',''], rtt=null;
+  let local=null, remote=null;
+  if(pair){
+    local = byId[pair.localCandidateId]; remote = byId[pair.remoteCandidateId];
+    rtt = pair.currentRoundTripTime;
+    verdict = classify(local, remote);
+  }
+  let v=null, a=null;
+  stats.forEach(r=>{
+    if(r.type!=='inbound-rtp') return;
+    if(r.kind==='video' && (r.packetsReceived||0)>0) v=r;
+    if(r.kind==='audio' && (r.packetsReceived||0)>0) a=r;
+  });
+  if(v){
+    const now=performance.now();
+    let kbps='-';
+    if(lastTs && v.bytesReceived>=lastBytes){
+      kbps = Math.round((v.bytesReceived-lastBytes)*8/((now-lastTs)/1000)/1000)+' kbps';
+    }
+    lastBytes=v.bytesReceived; lastTs=now;
+    rows.push(['分辨率', (v.frameWidth||'?')+'×'+(v.frameHeight||'?')+' @ '+(Math.round(v.framesPerSecond||0))+'fps']);
+    rows.push(['视频码率', kbps]);
+    rows.push(['丢包', (v.packetsLost||0)+' / '+v.packetsReceived]);
+    if(v.jitter!==undefined) rows.push(['抖动', Math.round(v.jitter*1000)+' ms']);
+  }
+  if(rtt!==null&&rtt!==undefined) rows.push(['RTT', Math.round(rtt*1000)+' ms']);
+  if(local) rows.push(['本端', (local.address||'?')+':'+(local.port||'?')+' ('+(local.candidateType||'?')+'/'+(local.protocol||'')+')']);
+  if(remote) rows.push(['主机端', (remote.address||'?')+':'+(remote.port||'?')+' ('+(remote.candidateType||'?')+'/'+(remote.protocol||'')+')']);
+  if(a) rows.push(['音频', '正常 ('+a.packetsReceived+' pkts)']);
+
+  panel.innerHTML =
+    '<div class="verdict '+verdict[1]+'">链路: '+verdict[0]+'</div>'+
+    '<table>'+rows.map(r=>'<tr><td>'+r[0]+'</td><td>'+r[1]+'</td></tr>').join('')+'</table>'+
+    '<div style="color:var(--dim);margin-top:6px;border-top:1px solid var(--line);padding-top:6px">若显示“中继 RELAY”说明走了微软转发；<br>局域网内应显示“局域网直连”。</div>';
+  if(pair){
+    pill.style.display='flex';
+    pill.innerHTML = '链路 <b style="color:'+(verdict[1]==='ok'?'var(--accent)':verdict[1]==='badc'?'var(--err)':'var(--warn)')+'">&nbsp;'+verdict[0]+'</b>';
+  }
+}
+
+/* =============================== 启动 =============================== */
+window.addEventListener('load', boot);
+</script>
+</body>
+</html>
