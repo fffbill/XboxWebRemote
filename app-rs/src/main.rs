@@ -5,6 +5,8 @@ mod live;
 mod power;
 mod session_native;
 mod signing;
+mod video;
+mod audio;
 mod state;
 mod win_proto;
 mod window;
@@ -13,6 +15,16 @@ mod xal;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
+
+/// 事件循环用户事件 (手柄输入 / 会话生命周期)
+#[derive(Debug, Clone)]
+pub enum AppEvent {
+    Input(crate::engine::channels::InputFrame),
+    Name(String),
+    StartSession { server_id: String, height: u32 },
+    SessionStarted,
+    SessionStatus { stage: String, message: String, terminal: bool },
+}
 
 pub struct App {
     pub client: reqwest::Client,

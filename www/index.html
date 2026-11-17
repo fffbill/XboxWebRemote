@@ -470,6 +470,15 @@ function powerText(s){ return {On:'已开机', Off:'已关机', Standby:'待机'
 
 async function startFlow(c){
   showView('view-stream');
+  // 原生 App 模式: 串流由 Rust 引擎接管 (视频层 + 手柄直通)
+  if (window.XWR_IN_APP && window.ipc) {
+    const height = quality === '1440p' ? 1440 : (quality === '720p' ? 720 : 1080);
+    setState('原生串流启动中…', '');
+    try {
+      window.ipc.postMessage(JSON.stringify({cmd: 'start-stream', serverId: c.serverId, height}));
+    } catch(e) {}
+    return;
+  }
   const off = c.powerState === 'Off';
   if(c.powerState !== 'On'){
     stage('正在唤醒 '+c.deviceName, '正在唤醒主机并建立串流会话：待机唤醒约需 30–120 秒，期间请勿关闭页面…');
@@ -520,6 +529,17 @@ function stage(title, sub, isError){
   $('stageMsg').style.display='flex';
 }
 function stageDone(){ $('stageMsg').style.display='none'; }
+window.xwrNativeStatus = (stage, message, terminal) => {
+  if (stage === 'streaming') {
+    setState('已连接', 'good');
+    stageDone();
+  } else if (terminal) {
+    setState(message, 'err');
+  } else {
+    setState(message);
+  }
+};
+
 function setState(t, cls){
   $('stateText').textContent = t;
   $('statePill').className = 'pill '+(cls||'');
