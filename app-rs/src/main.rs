@@ -3,6 +3,7 @@ mod gamepad;
 mod http;
 mod live;
 mod power;
+mod session_native;
 mod signing;
 mod state;
 mod win_proto;
@@ -137,10 +138,12 @@ fn handle_auth_code(url: &str) {
     win_proto::notify_result(ok);
 }
 
-fn parse_args() -> (u16, bool, Option<String>) {
+fn parse_args() -> (u16, bool, Option<String>, Option<String>, u64) {
     let args: Vec<String> = std::env::args().collect();
     let mut port = 8977u16;
     let mut headless = false;
+    let mut connect_test: Option<String> = None;
+    let mut duration: u64 = 30;
     let mut auth_code = None;
     let mut i = 1;
     while i < args.len() {
@@ -158,15 +161,34 @@ fn parse_args() -> (u16, bool, Option<String>) {
                 i += 1;
             }
             "--headless" => headless = true,
+            "--duration" => {
+                if let Some(v) = args.get(i + 1) {
+                    duration = v.parse().unwrap_or(30);
+                }
+                i += 1;
+            }
+            "--connect-test" => {
+                if let Some(v) = args.get(i + 1) {
+                    connect_test = Some(v.clone());
+                }
+                i += 1;
+                headless = true;
+            }
             _ => {}
         }
         i += 1;
     }
-    (port, headless, auth_code)
+    (port, headless, auth_code, connect_test, duration)
 }
 
 fn main() {
-    let (port, headless, auth_code) = parse_args();
+    let (port, headless, auth_code, connect_test, duration) = parse_args();
+
+    // rustls 双提供器歧义: webrtc DTLS 握手需要进程级 CryptoProvider (否则 panic)
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("crypto provider 安装失败");
+    env_logger::init(); // RUST_LOG=debug 可看 webrtc-rs ICE 内部日志
 
     // 登录回调: Windows 由注册表协议调起第二个实例转交后退出 (macOS 用 Helper.app)
     if let Some(url) = auth_code {
@@ -176,9 +198,25 @@ fn main() {
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let app = std::sync::Arc::new(App::new(port));
-
-    // 加载令牌 + 启动服务
     xal::load_tokens(&app);
+
+    // 连接测试: 纯 Rust WebRTC 会话连接主机 (无浏览器)
+    if let Some(server_id) = connect_test {
+        let a = app.clone();
+        let result = rt.block_on(async move {
+            session_native::run_connect_test(a, &server_id, duration).await
+        });
+        match result {
+            Ok(_) => println!("✅ 连接测试通过"),
+            Err(e) => {
+                println!("❌ 连接测试失败: {}", e);
+                std::process::exit(1);
+            }
+        }
+        std::process::exit(0);
+    }
+
+    // 启动服务
     {
         let a = app.clone();
         rt.spawn(async move {

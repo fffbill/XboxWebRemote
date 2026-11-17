@@ -334,9 +334,10 @@ impl RealNanoPeerConnection {
                         if let Ok(init) = candidate.to_json() {
                             if let Some(text) = candidate_to_protocol_candidate(&init) {
                                 nano_log!(
-                                    "local ice candidate gathered mid={} mline={}",
+                                    "local ice candidate gathered mid={} mline={} cand={}",
                                     text.sdp_mid,
-                                    text.sdp_mline_index
+                                    text.sdp_mline_index,
+                                    text.candidate
                                 );
                                 shared.push_local_candidate(text);
                             }
@@ -595,9 +596,10 @@ impl RealNanoPeerConnection {
             return Ok(());
         }
         nano_log!(
-            "add remote candidate mid={} mline={}",
+            "add remote candidate mid={} mline={} cand={}",
             candidate.sdp_mid,
-            candidate.sdp_mline_index
+            candidate.sdp_mline_index,
+            candidate.candidate
         );
         let init = RTCIceCandidateInit {
             candidate: candidate.candidate.clone(),
