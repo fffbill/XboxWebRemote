@@ -1055,14 +1055,14 @@ pokeTopbar();
 /* =============================== 统计面板 =============================== */
 let statsTimer=null, lastBytes=0, lastTs=0;
 
-function classify(local, remote){
+function classify(local, remote, rtt){
   if(!remote) return ['…',''];
   const rt = remote.candidateType||'', lt = local&&local.candidateType||'';
-  const ra = remote.address||'';
+  const ms = (rtt||0)*1000;
   if(rt==='relay'||lt==='relay') return ['中继 RELAY','badc'];
-  if(isPrivateIp(ra)) return ['局域网直连 🎉','ok'];
-  if(isV6(ra)) return ['IPv6 直连','ok'];
-  if(rt==='host') return ['公网直连 (host)','ok'];
+  if(rt==='host' && ms < 20) return ['局域网直连 🎉','ok'];
+  if(rt==='srflx' && ms < 50) return ['P2P 直连','ok'];
+  if(rt==='host') return ['host 直连','ok'];
   return ['NAT 穿透直连 (P2P)','ok'];
 }
 
@@ -1093,7 +1093,7 @@ async function pollStats(){
   if(pair){
     local = byId[pair.localCandidateId]; remote = byId[pair.remoteCandidateId];
     rtt = pair.currentRoundTripTime;
-    verdict = classify(local, remote);
+    verdict = classify(local, remote, rtt);
   }
   let v=null, a=null;
   stats.forEach(r=>{
@@ -1114,8 +1114,8 @@ async function pollStats(){
     if(v.jitter!==undefined) rows.push(['抖动', Math.round(v.jitter*1000)+' ms']);
   }
   if(rtt!==null&&rtt!==undefined) rows.push(['RTT', Math.round(rtt*1000)+' ms']);
-  if(local) rows.push(['本端', (local.address||'?')+':'+(local.port||'?')+' ('+(local.candidateType||'?')+'/'+(local.protocol||'')+')']);
-  if(remote) rows.push(['主机端', (remote.address||'?')+':'+(remote.port||'?')+' ('+(remote.candidateType||'?')+'/'+(remote.protocol||'')+')']);
+  if(local) rows.push(['本端', (local.address||local.ip||'?')+':'+(local.port||'?')+' ('+(local.candidateType||'?')+'/'+(local.protocol||'')+')']);
+  if(remote) rows.push(['主机端', (remote.address||remote.ip||'?')+':'+(remote.port||'?')+' ('+(remote.candidateType||'?')+'/'+(remote.protocol||'')+')']);
   if(a) rows.push(['音频', '正常 ('+a.packetsReceived+' pkts)']);
 
   panel.innerHTML =

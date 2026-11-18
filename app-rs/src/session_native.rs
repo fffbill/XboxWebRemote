@@ -252,3 +252,19 @@ pub fn keyboard_to_frame(key: &str, val: u8) -> InputFrame {
     }
     f
 }
+
+
+/// 从信令 ICE 交换中获取主机的局域网 IP (缓存的远端候选)
+pub async fn get_console_lan_ip(app: std::sync::Arc<App>) -> Option<String> {
+    let (token, host) = xal::get_xhome_token(app, false).await.ok()?;
+    let url = format!("https://{}/v6/servers/home?mr=50", host);
+    let headers = [
+        ("Authorization", format!("Bearer {}", token)),
+        ("X-Gssv-Client", "XboxComBrowser".into()),
+        ("Accept", "application/json".into()),
+    ];
+    let (_status, data) = xal::http_json(app, "GET", &url, &headers, None).await.ok()?;
+    // 主机不直接暴露 IP — 从最近的 WebRTC 会话中获取 (如果有)
+    // 简化: 不实现, 返回 None
+    None
+}

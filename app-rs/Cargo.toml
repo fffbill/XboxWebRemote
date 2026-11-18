@@ -20,7 +20,6 @@ time = { version = "0.3.55", features = ["parsing", "local-offset"] }
 tokio = { version = "1.54.1", features = ["full"] }
 url = "2.5.8"
 uuid = { version = "1.29.3", features = ["v4"] }
-wry = "0.57.2"
 rand_core = "0.10.1"
 webrtc = "0.17.2"
 rtp = "0.17.2"

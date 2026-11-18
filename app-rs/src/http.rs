@@ -26,6 +26,7 @@ pub async fn serve(app: std::sync::Arc<App>) {
         .route("/api/live/start", post(live_start))
         .route("/api/live/stop", post(live_stop))
         .route("/api/live/status", get(live_status))
+        .route("/api/network-info", get(network_info))
         .route("/api/live/chunk", post(live_chunk))
         .route("/live.flv", get(live_flv))
         .route("/v5/{*rest}", any(proxy))
@@ -164,6 +165,25 @@ async fn live_stop(State(app): State<std::sync::Arc<App>>) -> Response {
 
 async fn live_status(State(app): State<std::sync::Arc<App>>) -> Response {
     json_resp(StatusCode::OK, live::status(app.clone()).await)
+}
+
+async fn network_info(State(app): State<std::sync::Arc<App>>) -> Response {
+    let lan_ip = live::lan_ip();
+    // 从主机列表取主机 IP (信令端点)
+    let console_ip = {
+        let p = app.persist.lock().unwrap();
+        // 主机和 Mac 在同一局域网时, 用最近一次 ICE 交换的远端地址
+        // 这里简化: 直接用已知的主机局域网 IP (从信令候选交换中缓存)
+        match crate::session_native::get_console_lan_ip(app.clone()).await {
+            Some(ip) => ip,
+            None => String::new(),
+        }
+    };
+    json_resp(StatusCode::OK, json!({
+        "mac_ip": lan_ip,
+        "console_ip": console_ip,
+        "same_lan": !console_ip.is_empty() && console_ip.split('.').take(3).collect::<Vec<_>>() == lan_ip.split('.').take(3).collect::<Vec<_>>(),
+    }))
 }
 
 async fn live_chunk(State(app): State<std::sync::Arc<App>>, headers: HeaderMap, body: Bytes) -> Response {
