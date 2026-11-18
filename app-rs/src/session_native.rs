@@ -228,3 +228,27 @@ pub async fn run_connect_test(
     log!("连接测试结束");
     Ok(())
 }
+
+
+/// 键盘按键 → 游戏手柄 InputFrame 字段 (与浏览器版 Gamepad keyboard_mapping 一致)
+pub fn keyboard_to_frame(key: &str, val: u8) -> InputFrame {
+    let mut f = InputFrame::default();
+    match key {
+        "a" | "Enter" => f.a = val,
+        "b" | "Backspace" => f.b = val,
+        "x" | "KeyX" => f.x = val,
+        "y" | "KeyY" => f.y = val,
+        "dpad_up" | "ArrowUp" => f.dpad_up = val,
+        "dpad_down" | "ArrowDown" => f.dpad_down = val,
+        "dpad_left" | "ArrowLeft" => f.dpad_left = val,
+        "dpad_right" | "ArrowRight" => f.dpad_right = val,
+        "left_shoulder" | "BracketLeft" => f.left_shoulder = val,
+        "right_shoulder" | "BracketRight" => f.right_shoulder = val,
+        "left_thumb" | "KeyL" => f.left_thumb = val,
+        "right_thumb" | "KeyR" => f.right_thumb = val,
+        "menu" | "KeyM" => f.menu = val,
+        "nexus" | "KeyN" => f.nexus = val,
+        _ => {}
+    }
+    f
+}

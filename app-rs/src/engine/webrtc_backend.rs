@@ -50,6 +50,8 @@ const VIDEO_RTP_SAMPLE_MAX_DELAY: Duration = Duration::from_millis(220);
 struct PeerSharedState {
     local_candidates: Mutex<Vec<IceCandidate>>,
     observed_tracks: Mutex<Vec<MediaTrackKind>>,
+    local_endpoints: Mutex<Option<(String, u16)>>,
+    remote_endpoints: Mutex<Option<(String, u16)>>,
     message_ready: AtomicBool,
     input_ready: AtomicBool,
     keyframe_requested: AtomicBool,
@@ -71,6 +73,8 @@ impl PeerSharedState {
         Self {
             local_candidates: Mutex::new(Vec::new()),
             observed_tracks: Mutex::new(Vec::new()),
+            local_endpoints: Mutex::new(None),
+            remote_endpoints: Mutex::new(None),
             message_ready: AtomicBool::new(false),
             input_ready: AtomicBool::new(false),
             keyframe_requested: AtomicBool::new(false),
@@ -101,6 +105,12 @@ impl PeerSharedState {
     }
 
     fn push_local_candidate(&self, candidate: IceCandidate) {
+        // 提取 IP/端口用于统计显示
+        if let Some((ip, port)) = parse_candidate_addr(&candidate.candidate) {
+            if let Ok(mut guard) = self.local_endpoints.lock() {
+                *guard = Some((ip, port));
+            }
+        }
         if let Ok(mut guard) = self.local_candidates.lock() {
             guard.push(candidate);
         }
@@ -716,6 +726,14 @@ impl RealNanoPeerConnection {
         baseline.video_bytes_received = video_bytes_received;
         baseline.video_frames_received = frames_received;
 
+        // 传递本端端点信息 (远端从连接状态获取)
+        if let Ok(guard) = self.shared.local_endpoints.lock() {
+            if let Some((ip, port)) = guard.as_ref() {
+                stats.local_ip = Some(ip.clone());
+                stats.local_port = Some(*port);
+            }
+        }
+
         stats
     }
 
@@ -1138,4 +1156,14 @@ fn h264_nal_units(data: &[u8]) -> Vec<(usize, u8)> {
         }
     }
     nals
+}
+
+/// 从 ICE candidate 字符串提取 IP 和端口
+fn parse_candidate_addr(candidate_str: &str) -> Option<(String, u16)> {
+    // 格式: candidate:... typ host raddr ... rport ...
+    let parts: Vec<&str> = candidate_str.split_whitespace().collect();
+    if parts.len() < 6 { return None; }
+    let ip = parts.get(4)?;
+    let port: u16 = parts.get(5)?.parse().ok()?;
+    Some((ip.to_string(), port))
 }

@@ -11,6 +11,11 @@ pub struct StreamStats {
     pub frames_received: u64,
     pub packets_lost: u64,
     pub packets_received: u64,
+    pub local_ip: Option<String>,
+    pub local_port: Option<u16>,
+    pub remote_ip: Option<String>,
+    pub remote_port: Option<u16>,
+    pub connection_type: String,
 }
 
 impl Default for StreamStats {
@@ -27,6 +32,11 @@ impl Default for StreamStats {
             frames_received: 0,
             packets_lost: 0,
             packets_received: 0,
+            local_ip: None,
+            local_port: None,
+            remote_ip: None,
+            remote_port: None,
+            connection_type: String::new(),
         }
     }
 }
@@ -74,5 +84,13 @@ impl StreamStats {
 
     pub fn update_audio_level(&mut self, value: f64) {
         self.audio_level = Some(value);
+    }
+
+    pub fn set_endpoints(&mut self, lip: &str, lport: u16, rip: &str, rport: u16, ctype: &str) {
+        self.local_ip = Some(lip.to_string());
+        self.local_port = Some(lport);
+        self.remote_ip = Some(rip.to_string());
+        self.remote_port = Some(rport);
+        self.connection_type = ctype.to_string();
     }
 }

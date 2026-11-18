@@ -20,6 +20,7 @@ use std::sync::Mutex;
 #[derive(Debug, Clone)]
 pub enum AppEvent {
     Input(crate::engine::channels::InputFrame),
+    Keyboard { key: String, pressed: bool },
     Name(String),
     StartSession { server_id: String, height: u32 },
     SessionStarted,

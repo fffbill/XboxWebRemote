@@ -529,6 +529,35 @@ function stage(title, sub, isError){
   $('stageMsg').style.display='flex';
 }
 function stageDone(){ $('stageMsg').style.display='none'; }
+window.__nativeStatsData = null;
+window.xwrNativeStats = (data) => {
+  try { window.__nativeStatsData = JSON.parse(data); } catch(e) { window.__nativeStatsData = data; }
+};
+
+// 键盘输入转发 (原生模式)
+if (window.XWR_IN_APP) {
+  const keyMap = {
+    'Enter': 'a', 'Backspace': 'b', 'KeyX': 'x', 'KeyY': 'y',
+    'ArrowUp': 'dpad_up', 'ArrowDown': 'dpad_down',
+    'ArrowLeft': 'dpad_left', 'ArrowRight': 'dpad_right',
+    'BracketLeft': 'left_shoulder', 'BracketRight': 'right_shoulder',
+    'KeyL': 'left_thumb', 'KeyR': 'right_thumb',
+  };
+  const sendNativeInput = (type, key) => {
+    if (window.ipc && key) {
+      window.ipc.postMessage(JSON.stringify({cmd: type, key: key}));
+    }
+  };
+  document.addEventListener('keydown', (e) => {
+    const mapped = keyMap[e.code] || keyMap[e.key];
+    if (mapped) { e.preventDefault(); sendNativeInput('key-down', mapped); }
+  });
+  document.addEventListener('keyup', (e) => {
+    const mapped = keyMap[e.code] || keyMap[e.key];
+    if (mapped) { e.preventDefault(); sendNativeInput('key-up', mapped); }
+  });
+}
+
 window.xwrNativeStatus = (stage, message, terminal) => {
   if (stage === 'streaming') {
     setState('已连接', 'good');
